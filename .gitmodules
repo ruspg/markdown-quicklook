@@ -1,0 +1,3 @@
+[submodule "PreviewMarkdown"]
+	path = PreviewMarkdown
+	url = https://github.com/smittytone/PreviewMarkdown.git
