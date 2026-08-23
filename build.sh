@@ -1,12 +1,23 @@
 #!/bin/bash
 set -euo pipefail
 
+# markdown-quicklook build script (hardened).
+#
+#   ./build.sh          patch, verify, build, install, register, launch
+#   ./build.sh --check  patch + verify only — no build, no install, no launch;
+#                       the submodule is restored to pristine afterwards.
+#
+# The patch layer is semantic (seds + regenerated stubs) applied to a CLEAN
+# submodule, then verified by OUTCOME assertions. If upstream drifts so a sed
+# no longer lands, verification fails loudly instead of shipping a wrong build.
+
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PM_DIR="$SCRIPT_DIR/PreviewMarkdown"
 PATCHES_DIR="$SCRIPT_DIR/patches"
 QLTOGGLE_DIR="$SCRIPT_DIR/QLToggle"
 BUILD_DIR="$PM_DIR/build"
 INSTALL_DIR="$HOME/Applications"
+BUILD_LOG="$SCRIPT_DIR/.last-build.log"
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -17,21 +28,36 @@ info()  { echo -e "${GREEN}[✓]${NC} $1"; }
 warn()  { echo -e "${YELLOW}[!]${NC} $1"; }
 fail()  { echo -e "${RED}[✗]${NC} $1"; exit 1; }
 
+CHECK_ONLY=0
+[ "${1:-}" = "--check" ] && CHECK_ONLY=1
+
+echo ""
+if [ "$CHECK_ONLY" -eq 1 ]; then
+    echo "=== markdown-quicklook build (--check: patch + verify only) ==="
+else
+    echo "=== markdown-quicklook build ==="
+fi
+echo ""
+
 # --- Prerequisites ---
 
-echo ""
-echo "=== markdown-quicklook build ==="
-echo ""
-
-command -v xcodebuild >/dev/null 2>&1 || fail "Xcode command line tools not found. Install with: xcode-select --install"
-info "Xcode $(xcodebuild -version 2>&1 | head -1 | awk '{print $2}')"
-
+command -v git >/dev/null 2>&1 || fail "git not found"
 [ -e "$PM_DIR/.git" ] || fail "PreviewMarkdown submodule not found. Run: git submodule update --init"
-info "PreviewMarkdown submodule OK"
+
+# --- Reset submodule to pristine (reproducible patch base) ---
+
+git -C "$PM_DIR" reset --hard HEAD >/dev/null
+git -C "$PM_DIR" clean -fdx >/dev/null
+HEAD_SHA="$(git -C "$PM_DIR" rev-parse HEAD)"
+RECORDED_SHA="$(git ls-tree HEAD PreviewMarkdown | awk '{print $3}')"
+if [ "$HEAD_SHA" != "$RECORDED_SHA" ]; then
+    warn "Building uncommitted submodule revision $HEAD_SHA (recorded: $RECORDED_SHA)."
+    warn "If this is an intentional bump, commit the new submodule pointer."
+fi
+info "Submodule clean at $HEAD_SHA (stubs, assets and build products regenerate below)"
 
 # --- Apply patches ---
 
-echo ""
 info "Applying patches..."
 
 # Stub files
@@ -57,6 +83,7 @@ for TARGET_DIR in "$PM_DIR/PreviewMarkdown" "$PM_DIR/Markdown Previewer" "$PM_DI
     echo '{"info":{"author":"xcode","version":1}}' > "$ASSETS/Contents.json"
     echo '{"colors":[{"idiom":"universal"}],"info":{"author":"xcode","version":1}}' > "$ASSETS/AccentColor.colorset/Contents.json"
 
+    # vC "GitHub Compact": page #FFFFFF / #0D1117, code block #F6F8FA / #151B23
     cat > "$ASSETS/previewBackground.colorset/Contents.json" <<'JSON'
 {"colors":[{"color":{"color-space":"srgb","components":{"alpha":"1","blue":"1","green":"1","red":"1"}},"idiom":"universal"},{"appearances":[{"appearance":"luminosity","value":"dark"}],"color":{"color-space":"srgb","components":{"alpha":"1","blue":"0.090","green":"0.067","red":"0.051"}},"idiom":"universal"}],"info":{"author":"xcode","version":1}}
 JSON
@@ -74,14 +101,14 @@ for y in range(h):
     raw+=b'\x00'
     for x in range(w):
         raw+=b'\x33\x99\xcc\xff'
-sig=b'\x89PNG\r\n\x1a\n'
+sig=b'\x89PNG\r\x1a\n'
 def chunk(t,d):
     c=t+d; return struct.pack('>I',len(d))+c+struct.pack('>I',zlib.crc32(c)&0xffffffff)
 ihdr=chunk(b'IHDR',struct.pack('>IIBBBBB',w,h,8,6,0,0,0))
 idat=chunk(b'IDAT',zlib.compress(raw))
 iend=chunk(b'IEND',b'')
 open('$PM_DIR/PreviewMarkdown/Assets.xcassets/AppIcon.appiconset/icon_512x512.png','wb').write(sig+ihdr+idat+iend)
-" 2>/dev/null
+" || fail "placeholder icon generation failed — is python3 installed?"
 
 cat > "$PM_DIR/PreviewMarkdown/Assets.xcassets/AppIcon.appiconset/Contents.json" <<'JSON'
 {"images":[{"filename":"icon_512x512.png","idiom":"mac","scale":"1x","size":"512x512"},{"filename":"icon_512x512.png","idiom":"mac","scale":"2x","size":"256x256"}],"info":{"author":"xcode","version":1}}
@@ -180,10 +207,90 @@ fi
 
 info "Patches applied"
 
+# --- Verify patches (outcome assertions — the loud failure mode) ---
+
+verify_patches() {
+    local failed=0
+    local pbx="$PM_DIR/PreviewMarkdown.xcodeproj/project.pbxproj"
+    local constants="$PM_DIR/PreviewMarkdown/Constants.swift"
+    local styler="$PM_DIR/Common/PMStyler.swift"
+
+    v_absent()  { if grep -Eq "$3" "$2" 2>/dev/null; then echo "  [✗] $1"; failed=1; else echo "  [✓] $1"; fi; }
+    v_present() { if grep -Eq "$3" "$2" 2>/dev/null; then echo "  [✓] $1"; else echo "  [✗] $1"; failed=1; fi; }
+    v_min() {
+        local n; n=$(grep -Ec "$3" "$2" 2>/dev/null || true)
+        if [ "${n:-0}" -ge "$4" ]; then echo "  [✓] $1"; else echo "  [✗] $1 (found ${n:-0}, need ≥ $4)"; failed=1; fi
+    }
+    v_file()    { if [ -f "$2" ]; then echo "  [✓] $1"; else echo "  [✗] $1"; failed=1; fi; }
+
+    v_absent "pbxproj: no upstream bundle IDs"          "$pbx" 'com\.bps\.PreviewMarkdown'
+    v_absent "pbxproj: no absolute home paths"          "$pbx" 'path = "/Users'
+    v_absent "pbxproj: no iCloud paths"                 "$pbx" 'Library/Mobile Documents'
+    v_absent "pbxproj: no upstream team ID"             "$pbx" 'Y5J3K52DNA'
+    v_absent "pbxproj: no iconcomposer file type"       "$pbx" 'folder\.iconcomposer\.icon'
+    v_min   "pbxproj: local bundle IDs applied (≥10)"   "$pbx" 'com\.local\.PreviewMarkdown' 10
+    v_absent "Constants: no upstream bundle IDs"        "$constants" 'com\.bps\.PreviewMarkdown'
+    v_present "Constants: vC heading colour"            "$constants" '1F2328FF'
+    v_absent  "Constants: old magenta gone"             "$constants" '941751FF'
+    v_absent  "Constants: old pure-green gone"          "$constants" '00FF00FF'
+    v_present "Constants: Menlo code font"              "$constants" 'Menlo-Regular'
+    v_min    "PMStyler: mode-aware colours (×4)"        "$styler" 'renderLightMode \? NSColor' 4
+    v_absent "PMStyler: old highlighter theme gone"     "$styler" 'atom-one'
+    v_file "stub present: codes (root)"                 "$PM_DIR/REPLACE_WITH_YOUR_CODES.swift"
+    v_file "stub present: codes (target dir)"           "$PM_DIR/PreviewMarkdown/REPLACE_WITH_YOUR_CODES.swift"
+    v_file "stub present: functions (root)"             "$PM_DIR/REPLACE_WITH_YOUR_FUNCTIONS.swift"
+    v_file "stub present: functions (target dir)"       "$PM_DIR/PreviewMarkdown/REPLACE_WITH_YOUR_FUNCTIONS.swift"
+
+    local ent name
+    for ent in "$PM_DIR/PreviewMarkdown/PreviewMarkdown.entitlements" \
+               "$PM_DIR/Markdown Previewer/Previewer.entitlements" \
+               "$PM_DIR/Markdown Thumbnailer/Thumbnailer.entitlements" \
+               "$PM_DIR/RenderDemo/RenderDemo.entitlements"; do
+        name="$(basename "$ent")"
+        v_present "entitlements rewritten: $name" "$ent" 'com\.local\.suite\.previewmarkdown'
+    done
+    v_present "Previewer sandboxed"   "$PM_DIR/Markdown Previewer/Previewer.entitlements" 'com\.apple\.security\.app-sandbox'
+    v_present "Thumbnailer sandboxed" "$PM_DIR/Markdown Thumbnailer/Thumbnailer.entitlements" 'com\.apple\.security\.app-sandbox'
+
+    if grep 'tintProminence' "$PM_DIR/PreviewMarkdown/AppDelegateSettings.swift" 2>/dev/null | grep -qv '^[[:space:]]*//'; then
+        echo "  [✗] tintProminence still uncommented"
+        failed=1
+    else
+        echo "  [✓] tintProminence commented out"
+    fi
+
+    return "$failed"
+}
+
+echo ""
+info "Verifying patches (outcome assertions)..."
+VFAIL=0
+verify_patches || VFAIL=1
+
+if [ "$CHECK_ONLY" -eq 1 ]; then
+    # Always restore the pristine tree in --check mode, pass or fail
+    git -C "$PM_DIR" reset --hard HEAD >/dev/null
+    git -C "$PM_DIR" clean -fdx >/dev/null
+    if [ "$VFAIL" -eq 1 ]; then
+        fail "--check: patch verification FAILED (assertions above). Tree restored to pristine; nothing was built or installed."
+    fi
+    echo ""
+    info "--check complete: patches apply cleanly and verify against this submodule revision. Nothing was built or installed."
+    exit 0
+fi
+
+if [ "$VFAIL" -eq 1 ]; then
+    fail "Patch verification FAILED — upstream has drifted from what build.sh expects. See the ✗ assertions above. This build stops here."
+fi
+info "Patch verification passed"
+
 # --- Build PreviewMarkdown ---
 
 echo ""
 info "Building PreviewMarkdown..."
+
+command -v xcodebuild >/dev/null 2>&1 || fail "Xcode command line tools not found. Install with: xcode-select --install"
+info "Xcode $(xcodebuild -version 2>&1 | head -1 | awk '{print $2}')"
 
 rm -rf "$BUILD_DIR"
 xcodebuild -project "$PM_DIR/PreviewMarkdown.xcodeproj" \
@@ -193,22 +300,22 @@ xcodebuild -project "$PM_DIR/PreviewMarkdown.xcodeproj" \
     CODE_SIGN_IDENTITY="-" \
     DEVELOPMENT_TEAM="" \
     ASSETCATALOG_OTHER_FLAGS="" \
-    2>&1 | tail -5
+    2>&1 | tee "$BUILD_LOG" | tail -5
 
 PM_APP="$BUILD_DIR/Build/Products/Release/PreviewMarkdown.app"
-[ -d "$PM_APP" ] || fail "Build failed — PreviewMarkdown.app not found"
+[ -d "$PM_APP" ] || fail "Build failed — PreviewMarkdown.app not found (full log: $BUILD_LOG)"
 info "PreviewMarkdown built"
 
 # Sign
 codesign --force --sign - \
     --entitlements "$PM_DIR/Markdown Previewer/Previewer.entitlements" \
-    "$PM_APP/Contents/PlugIns/Markdown Previewer.appex" 2>/dev/null
+    "$PM_APP/Contents/PlugIns/Markdown Previewer.appex" || fail "codesign failed: Markdown Previewer.appex"
 codesign --force --sign - \
     --entitlements "$PM_DIR/Markdown Thumbnailer/Thumbnailer.entitlements" \
-    "$PM_APP/Contents/PlugIns/Markdown Thumbnailer.appex" 2>/dev/null
+    "$PM_APP/Contents/PlugIns/Markdown Thumbnailer.appex" || fail "codesign failed: Markdown Thumbnailer.appex"
 codesign --force --sign - \
     --entitlements "$PM_DIR/PreviewMarkdown/PreviewMarkdown.entitlements" \
-    "$PM_APP" 2>/dev/null
+    "$PM_APP" || fail "codesign failed: PreviewMarkdown.app"
 info "Signed (ad-hoc)"
 
 # --- Build QLToggle ---
@@ -228,7 +335,7 @@ QLTOGGLE_APP="$BUILD_DIR/QLToggle.app"
 mkdir -p "$QLTOGGLE_APP/Contents/MacOS"
 cp "$QLTOGGLE_BIN" "$QLTOGGLE_APP/Contents/MacOS/"
 cp "$QLTOGGLE_DIR/Info.plist" "$QLTOGGLE_APP/Contents/"
-codesign --force --sign - "$QLTOGGLE_APP" 2>/dev/null
+codesign --force --sign - "$QLTOGGLE_APP" || fail "codesign failed: QLToggle.app"
 rm -f "$QLTOGGLE_BIN"
 info "QLToggle built"
 
