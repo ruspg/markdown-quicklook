@@ -200,6 +200,16 @@ for ENT in "$PM_DIR/Markdown Previewer/Previewer.entitlements" \
     fi
 done
 
+# vC backgrounds as LITERALS — the Previewer appex ships an empty Assets.car
+# (stub colorsets don't compile into that target), so named colors resolve nil
+# and nothing paints. Literals are patch-layer-native and catalog-independent.
+sed -i '' \
+    -e 's/NSColor\.textBackgroundColor$/NSColor(srgbRed: 13 \/ 255.0, green: 17 \/ 255.0, blue: 23 \/ 255.0, alpha: 1)/' \
+    "$PM_DIR/Markdown Previewer/PreviewViewController.swift"
+sed -i '' \
+    -e 's/paragraphBlock\.backgroundColor = \.previewCode/paragraphBlock.backgroundColor = self.renderLightMode ? NSColor(srgbRed: 246 \/ 255.0, green: 248 \/ 255.0, blue: 250 \/ 255.0, alpha: 1) : NSColor(srgbRed: 21 \/ 255.0, green: 27 \/ 255.0, blue: 35 \/ 255.0, alpha: 1)/' \
+    "$PM_DIR/Common/PMStyler.swift"
+
 # Fix tintProminence (requires macOS 26 SDK, not available in Xcode 16)
 SETTINGS_FILE="$PM_DIR/PreviewMarkdown/AppDelegateSettings.swift"
 if grep -q "self.fontSizeSlider.tintProminence" "$SETTINGS_FILE" 2>/dev/null; then
@@ -238,6 +248,8 @@ verify_patches() {
     v_present "Constants: system body font"            "$constants" '\.AppleSystemUIFont'
     v_absent  "Constants: unresolvable SFPro-Regular"    "$constants" 'SFPro-Regular'
     v_min    "PMStyler: mode-aware colours (×4)"        "$styler" 'renderLightMode \? NSColor' 4
+    v_present "PMStyler: literal code-block background" "$styler" 'srgbRed: 21'
+    v_present "Previewer: literal page background"      "$PM_DIR/Markdown Previewer/PreviewViewController.swift" 'srgbRed: 13'
     v_absent "PMStyler: old highlighter theme gone"     "$styler" 'atom-one'
     v_file "stub present: codes (root)"                 "$PM_DIR/REPLACE_WITH_YOUR_CODES.swift"
     v_file "stub present: codes (target dir)"           "$PM_DIR/PreviewMarkdown/REPLACE_WITH_YOUR_CODES.swift"
