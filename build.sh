@@ -324,12 +324,18 @@ echo ""
 info "Building QLToggle..."
 
 QLTOGGLE_BIN="$QLTOGGLE_DIR/QLToggle"
-swiftc -o "$QLTOGGLE_BIN" \
-    -target arm64-apple-macos13.0 \
-    -framework SwiftUI \
-    -framework AppKit \
-    -parse-as-library \
-    "$QLTOGGLE_DIR/QLToggleApp.swift" 2>&1
+# swiftc doesn't take -arch: compile each slice with its own -target, then lipo
+for ARCH in arm64 x86_64; do
+    swiftc -o "$QLTOGGLE_BIN.$ARCH" \
+        -target "$ARCH-apple-macos13.0" \
+        -framework SwiftUI \
+        -framework AppKit \
+        -framework ServiceManagement \
+        -parse-as-library \
+        "$QLTOGGLE_DIR/QLToggleApp.swift" 2>&1
+done
+lipo -create -output "$QLTOGGLE_BIN" "$QLTOGGLE_BIN.arm64" "$QLTOGGLE_BIN.x86_64"
+rm -f "$QLTOGGLE_BIN.arm64" "$QLTOGGLE_BIN.x86_64"
 
 QLTOGGLE_APP="$BUILD_DIR/QLToggle.app"
 mkdir -p "$QLTOGGLE_APP/Contents/MacOS"
