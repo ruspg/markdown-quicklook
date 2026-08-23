@@ -154,7 +154,7 @@ sed -i '' \
     -e 's/"22528EFF"/"59636EFF"/' \
     -e 's/"009193FF"/"0550AEFF"/' \
     -e 's/"AndaleMono"/"Menlo-Regular"/' \
-    -e 's/"SFPro-Regular"/".AppleSystemUIFont"/' \
+    -e 's/"SFPro-Regular"/"HelveticaNeue"/' \
     -E \
     -e 's/(H1[[:space:]]+)=[[:space:]]*2\.6/\1= 1.75/' \
     -e 's/(H2[[:space:]]+)=[[:space:]]*2\.2/\1= 1.4/' \
@@ -249,8 +249,9 @@ verify_patches() {
     v_absent  "Constants: old magenta gone"             "$constants" '941751FF'
     v_absent  "Constants: old pure-green gone"          "$constants" '00FF00FF'
     v_present "Constants: Menlo code font"              "$constants" 'Menlo-Regular'
-    v_present "Constants: system body font"            "$constants" '\.AppleSystemUIFont'
+    v_present "Constants: HelveticaNeue body font"     "$constants" 'HelveticaNeue'
     v_absent  "Constants: unresolvable SFPro-Regular"    "$constants" 'SFPro-Regular'
+    v_absent  "Constants: non-enumerable system font"    "$constants" 'AppleSystemUIFont'
     v_min    "PMStyler: mode-aware colours (×4)"        "$styler" 'renderLightMode \? NSColor' 4
     v_present "PMStyler: literal code-block background" "$styler" 'srgbRed: 21'
     v_present "Previewer: literal page background"      "$PM_DIR/Markdown Previewer/PreviewViewController.swift" 'srgbRed: 13'
