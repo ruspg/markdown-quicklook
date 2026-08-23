@@ -214,6 +214,14 @@ sed -i '' \
     -e 's/paragraphBlock\.backgroundColor = \.previewCode/paragraphBlock.backgroundColor = self.renderLightMode ? NSColor(srgbRed: 246 \/ 255.0, green: 248 \/ 255.0, blue: 250 \/ 255.0, alpha: 1) : NSColor(srgbRed: 21 \/ 255.0, green: 27 \/ 255.0, blue: 35 \/ 255.0, alpha: 1)/' \
     "$PM_DIR/Common/PMStyler.swift"
 
+# Line-spacing floor: loadSettings' defaults.float(forKey:) returns 0.0 for
+# missing keys (fresh install / after reset), and generateStyles turns 0 into
+# (0-1)*fontSize = NEGATIVE spacing -> code lines collapse and overlap.
+# Floor the guard at 1.0 so anything < 1.0 yields zero extra spacing.
+sed -i '' \
+    -e 's/self\.settings!\.lineSpacing >= 0\.0 ? self\.settings!\.lineSpacing : 0\.0/self.settings!.lineSpacing >= 1.0 ? self.settings!.lineSpacing : 1.0/' \
+    "$PM_DIR/Common/PMStyler.swift"
+
 # Fix tintProminence (requires macOS 26 SDK, not available in Xcode 16)
 SETTINGS_FILE="$PM_DIR/PreviewMarkdown/AppDelegateSettings.swift"
 if grep -q "self.fontSizeSlider.tintProminence" "$SETTINGS_FILE" 2>/dev/null; then
@@ -254,6 +262,7 @@ verify_patches() {
     v_absent  "Constants: non-enumerable system font"    "$constants" 'AppleSystemUIFont'
     v_min    "PMStyler: mode-aware colours (×4)"        "$styler" 'renderLightMode \? NSColor' 4
     v_present "PMStyler: literal code-block background" "$styler" 'srgbRed: 21'
+    v_present "PMStyler: line-spacing floor"           "$styler" 'lineSpacing >= 1.0'
     v_present "Previewer: literal page background"      "$PM_DIR/Markdown Previewer/PreviewViewController.swift" 'srgbRed: 13'
     v_absent "PMStyler: old highlighter theme gone"     "$styler" 'atom-one'
     v_file "stub present: codes (root)"                 "$PM_DIR/REPLACE_WITH_YOUR_CODES.swift"
