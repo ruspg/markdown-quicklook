@@ -26,7 +26,7 @@ echo ""
 command -v xcodebuild >/dev/null 2>&1 || fail "Xcode command line tools not found. Install with: xcode-select --install"
 info "Xcode $(xcodebuild -version 2>&1 | head -1 | awk '{print $2}')"
 
-[ -d "$PM_DIR/.git" ] || fail "PreviewMarkdown submodule not found. Run: git submodule update --init"
+[ -e "$PM_DIR/.git" ] || fail "PreviewMarkdown submodule not found. Run: git submodule update --init"
 info "PreviewMarkdown submodule OK"
 
 # --- Apply patches ---
@@ -58,10 +58,10 @@ for TARGET_DIR in "$PM_DIR/PreviewMarkdown" "$PM_DIR/Markdown Previewer" "$PM_DI
     echo '{"colors":[{"idiom":"universal"}],"info":{"author":"xcode","version":1}}' > "$ASSETS/AccentColor.colorset/Contents.json"
 
     cat > "$ASSETS/previewBackground.colorset/Contents.json" <<'JSON'
-{"colors":[{"color":{"color-space":"srgb","components":{"alpha":"1","blue":"0.78","green":"0.78","red":"0.78"}},"idiom":"universal"},{"appearances":[{"appearance":"luminosity","value":"dark"}],"color":{"color-space":"srgb","components":{"alpha":"1","blue":"0.22","green":"0.22","red":"0.22"}},"idiom":"universal"}],"info":{"author":"xcode","version":1}}
+{"colors":[{"color":{"color-space":"srgb","components":{"alpha":"1","blue":"1","green":"1","red":"1"}},"idiom":"universal"},{"appearances":[{"appearance":"luminosity","value":"dark"}],"color":{"color-space":"srgb","components":{"alpha":"1","blue":"0.090","green":"0.067","red":"0.051"}},"idiom":"universal"}],"info":{"author":"xcode","version":1}}
 JSON
     cat > "$ASSETS/previewCode.colorset/Contents.json" <<'JSON'
-{"colors":[{"color":{"color-space":"srgb","components":{"alpha":"1","blue":"0.90","green":"0.90","red":"0.90"}},"idiom":"universal"},{"appearances":[{"appearance":"luminosity","value":"dark"}],"color":{"color-space":"srgb","components":{"alpha":"1","blue":"0.15","green":"0.15","red":"0.15"}},"idiom":"universal"}],"info":{"author":"xcode","version":1}}
+{"colors":[{"color":{"color-space":"srgb","components":{"alpha":"1","blue":"0.980","green":"0.973","red":"0.965"}},"idiom":"universal"},{"appearances":[{"appearance":"luminosity","value":"dark"}],"color":{"color-space":"srgb","components":{"alpha":"1","blue":"0.137","green":"0.106","red":"0.082"}},"idiom":"universal"}],"info":{"author":"xcode","version":1}}
 JSON
 done
 
@@ -118,6 +118,39 @@ sed -i '' \
 
 # Constants.swift: update bundle ID prefix
 sed -i '' 's/com\.bps\.PreviewMarkdown/com.local.PreviewMarkdown/g' "$PM_DIR/PreviewMarkdown/Constants.swift"
+
+# Constants.swift: vC "GitHub Compact" theme defaults
+sed -i '' \
+    -e 's/"941751FF"/"1F2328FF"/' \
+    -e 's/"00FF00FF"/"24292FFF"/' \
+    -e 's/"0096FFFF"/"0969DAFF"/' \
+    -e 's/"22528EFF"/"59636EFF"/' \
+    -e 's/"009193FF"/"0550AEFF"/' \
+    -e 's/"AndaleMono"/"Menlo-Regular"/' \
+    -E \
+    -e 's/(H1[[:space:]]+)=[[:space:]]*2\.6/\1= 1.75/' \
+    -e 's/(H2[[:space:]]+)=[[:space:]]*2\.2/\1= 1.4/' \
+    -e 's/(H3[[:space:]]+)=[[:space:]]*1\.8/\1= 1.2/' \
+    -e 's/(H4[[:space:]]+)=[[:space:]]*1\.4/\1= 1.0/' \
+    -e 's/(H5[[:space:]]+)=[[:space:]]*1\.2/\1= 1.0/' \
+    -e 's/(H6[[:space:]]+)=[[:space:]]*1\.2/\1= 1.0/' \
+    -e 's/(FONT_SIZE[[:space:]]+)=[[:space:]]*16\.0/\1= 14.0/' \
+    -e 's/(LINE_SPACING[[:space:]]+)=[[:space:]]*1\.0/\1= 1.45/' \
+    -e 's/(PREVIEW_MARGIN_WIDTH[[:space:]]+)=[[:space:]]*16\.0/\1= 28.0/' \
+    "$PM_DIR/PreviewMarkdown/Constants.swift"
+
+# PMStyler.swift: vC dark-mode palette + tighter list indent + GitHub highlighter themes.
+# The four settings colours are static across modes upstream; light mode keeps
+# honouring user settings (displayColours), dark mode uses the shipped vC palette.
+sed -i '' \
+    -e 's/= NSColor\.hexToColour\(self\.settings!\.displayColours\[BUFFOON_CONSTANTS\.COLOUR_IDS\.HEADS\]!\)/= self.renderLightMode ? NSColor.hexToColour(self.settings!.displayColours[BUFFOON_CONSTANTS.COLOUR_IDS.HEADS]!) : NSColor.hexToColour("E6EDF3FF")/' \
+    -e 's/= NSColor\.hexToColour\(self\.settings!\.displayColours\[BUFFOON_CONSTANTS\.COLOUR_IDS\.CODE\]!\)/= self.renderLightMode ? NSColor.hexToColour(self.settings!.displayColours[BUFFOON_CONSTANTS.COLOUR_IDS.CODE]!) : NSColor.hexToColour("E6EDF3FF")/' \
+    -e 's/= NSColor\.hexToColour\(self\.settings!\.displayColours\[BUFFOON_CONSTANTS\.COLOUR_IDS\.LINKS\]!\)/= self.renderLightMode ? NSColor.hexToColour(self.settings!.displayColours[BUFFOON_CONSTANTS.COLOUR_IDS.LINKS]!) : NSColor.hexToColour("4493F8FF")/' \
+    -e 's/= NSColor\.hexToColour\(self\.settings!\.displayColours\[BUFFOON_CONSTANTS\.COLOUR_IDS\.QUOTES\]!\)/= self.renderLightMode ? NSColor.hexToColour(self.settings!.displayColours[BUFFOON_CONSTANTS.COLOUR_IDS.QUOTES]!) : NSColor.hexToColour("9198A1FF")/' \
+    -e 's/\? "atom-one-light" : "atom-one-dark"/? "github" : "github-dark"/' \
+    -E \
+    -e 's/(firstLineHeadIndent[[:space:]]+)=[[:space:]]*40\.0/\1= 22.0/' \
+    "$PM_DIR/Common/PMStyler.swift"
 
 # Entitlements: fix TeamIdentifierPrefix and add sandbox
 for ENT in "$PM_DIR/PreviewMarkdown/PreviewMarkdown.entitlements" \
