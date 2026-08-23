@@ -163,7 +163,7 @@ sed -i '' \
     -e 's/(H5[[:space:]]+)=[[:space:]]*1\.2/\1= 1.0/' \
     -e 's/(H6[[:space:]]+)=[[:space:]]*1\.2/\1= 1.0/' \
     -e 's/(FONT_SIZE[[:space:]]+)=[[:space:]]*16\.0/\1= 14.0/' \
-    -e 's/(LINE_SPACING[[:space:]]+)=[[:space:]]*1\.0/\1= 1.45/' \
+    -e 's/(LINE_SPACING[[:space:]]+)=[[:space:]]*1\.0/\1= 1.1/' \
     -e 's/(PREVIEW_MARGIN_WIDTH[[:space:]]+)=[[:space:]]*16\.0/\1= 28.0/' \
     "$PM_DIR/PreviewMarkdown/Constants.swift"
 
@@ -206,6 +206,10 @@ done
 sed -i '' \
     -e 's/NSColor\.textBackgroundColor$/NSColor(srgbRed: 13 \/ 255.0, green: 17 \/ 255.0, blue: 23 \/ 255.0, alpha: 1)/' \
     "$PM_DIR/Markdown Previewer/PreviewViewController.swift"
+# Paragraph gap: upstream hardcodes fontSize * 1.4 (~20pt at 14pt base);
+# vC wants ~0.6em (~8.4pt)
+sed -i '' 's/self\.settings\.fontSize \* 1\.4/self.settings.fontSize * 0.6/' "$PM_DIR/Common/Common.swift"
+
 sed -i '' \
     -e 's/paragraphBlock\.backgroundColor = \.previewCode/paragraphBlock.backgroundColor = self.renderLightMode ? NSColor(srgbRed: 246 \/ 255.0, green: 248 \/ 255.0, blue: 250 \/ 255.0, alpha: 1) : NSColor(srgbRed: 21 \/ 255.0, green: 27 \/ 255.0, blue: 35 \/ 255.0, alpha: 1)/' \
     "$PM_DIR/Common/PMStyler.swift"
