@@ -222,6 +222,15 @@ sed -i '' \
     -e 's/self\.settings!\.lineSpacing >= 0\.0 ? self\.settings!\.lineSpacing : 0\.0/self.settings!.lineSpacing >= 1.0 ? self.settings!.lineSpacing : 1.0/' \
     "$PM_DIR/Common/PMStyler.swift"
 
+# Blockquotes: upstream renders bold at 1.6x body size, right-aligned, bare.
+# vC: body-size plain text, left-aligned, with a GitHub-blue left rule and a
+# subtle tinted panel (same NSTextTableBlock machinery as code blocks).
+sed -i '' \
+    -e 's/makeFont("strong", self\.settings!\.fontSize \* BUFFOON_CONSTANTS\.MULTIPLIER\.BLOCK)/makeFont("plain", self.settings!.fontSize)/' \
+    "$PM_DIR/Common/PMStyler.swift"
+perl -pi -e 's/^\s*self\.paragraphs\["quote"\]\s*=\s*quoteParaStyle$/        quoteParaStyle.alignment = .left\n        let quoteTable = NSTextTable(); quoteTable.numberOfColumns = 1; quoteTable.collapsesBorders = true\n        let quoteBlock = NSTextTableBlock(table: quoteTable, startingRow: 0, rowSpan: 1, startingColumn: 0, columnSpan: 1)\n        let quotePanel = self.renderLightMode ? NSColor(srgbRed: 246 \/ 255.0, green: 248 \/ 255.0, blue: 250 \/ 255.0, alpha: 1) : NSColor(srgbRed: 22 \/ 255.0, green: 27 \/ 255.0, blue: 34 \/ 255.0, alpha: 1)\n        quoteBlock.setWidth(10.0, type: .absoluteValueType, for: .padding)\n        quoteBlock.backgroundColor = quotePanel\n        quoteParaStyle.textBlocks.append(quoteBlock)\n        self.paragraphs["quote"] = quoteParaStyle/' \
+    "$PM_DIR/Common/PMStyler.swift"
+
 # Fix tintProminence (requires macOS 26 SDK, not available in Xcode 16)
 SETTINGS_FILE="$PM_DIR/PreviewMarkdown/AppDelegateSettings.swift"
 if grep -q "self.fontSizeSlider.tintProminence" "$SETTINGS_FILE" 2>/dev/null; then
@@ -263,6 +272,8 @@ verify_patches() {
     v_min    "PMStyler: mode-aware colours (×4)"        "$styler" 'renderLightMode \? NSColor' 4
     v_present "PMStyler: literal code-block background" "$styler" 'srgbRed: 21'
     v_present "PMStyler: line-spacing floor"           "$styler" 'lineSpacing >= 1.0'
+    v_present "PMStyler: blockquote beautifier"        "$styler" 'quoteBlock.backgroundColor = quotePanel'
+    v_absent  "PMStyler: blockquote 1.6x bold gone"    "$styler" 'MULTIPLIER\.BLOCK\)'
     v_present "Previewer: literal page background"      "$PM_DIR/Markdown Previewer/PreviewViewController.swift" 'srgbRed: 13'
     v_absent "PMStyler: old highlighter theme gone"     "$styler" 'atom-one'
     v_file "stub present: codes (root)"                 "$PM_DIR/REPLACE_WITH_YOUR_CODES.swift"
@@ -406,4 +417,3 @@ info "Extensions registered, Quick Look cache reset"
 echo ""
 echo -e "${GREEN}Done!${NC} Press Space on any .md file in Finder to preview."
 echo "Use the menu bar toggle to switch between rendered/plain text mode."
-echo ""
