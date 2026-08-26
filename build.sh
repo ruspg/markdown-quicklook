@@ -201,6 +201,27 @@ for ENT in "$PM_DIR/Markdown Previewer/Previewer.entitlements" \
     fi
 done
 
+# --- Measure: cap the prose column at 45em ---
+#
+# The preview panel is sized as a fraction of the screen (0.75 by default), so
+# on any modern display a paragraph runs to ~175 characters per line — roughly
+# double the point where the return sweep starts losing the next line. Widen
+# the side inset until the column is 45 x the body size (the top of the
+# comfortable 45-90 character range) and centre it; the panel keeps its size,
+# so code blocks and tables still get the full 45em.
+#
+# The inset (not the container width) carries the cap on purpose: the container
+# keeps tracking the text view, so resizing the panel narrower just narrows the
+# column instead of clipping it.
+perl -0777 -pi -e 's/                if common\.settings\.previewMarginWidth > 0\.0 \{\n                    self\.renderTextView\.textContainerInset = NSSize\(width: common\.settings\.previewMarginWidth,\n\s+height: common\.settings\.previewMarginWidth\)\n                \}/                let vcMargin: CGFloat = common.settings.previewMarginWidth\n                let vcMeasure: CGFloat = common.settings.fontSize * 45.0\n                let vcInset: CGFloat = max(vcMargin, (self.preferredContentSize.width - vcMeasure) \/ 2.0)\n                self.renderTextView.textContainerInset = NSSize(width: vcInset, height: vcMargin)/' \
+    "$PM_DIR/Markdown Previewer/PreviewViewController.swift"
+# kbd lozenges are drawn in view coordinates, so they have to be offset by the
+# text container inset. Upstream reads `marginDelta`, which assumes the inset is
+# square and equal to the margin setting — neither is true once the measure cap
+# widens the sides. Read the inset the text view actually has.
+perl -0777 -pi -e 's/        lozengeRect\.origin\.x \+= self\.marginDelta\n        lozengeRect\.origin\.y \+= self\.marginDelta/        let lozengeInset: NSSize = self.textContainers.first?.textView?.textContainerInset ?? NSSize(width: self.marginDelta, height: self.marginDelta)\n        lozengeRect.origin.x += lozengeInset.width\n        lozengeRect.origin.y += lozengeInset.height/' \
+    "$PM_DIR/Common/PMLayouter.swift"
+
 # vC backgrounds as LITERALS — the Previewer appex ships an empty Assets.car
 # (stub colorsets don't compile into that target), so named colors resolve nil
 # and nothing paints. Literals are patch-layer-native and catalog-independent.
@@ -362,6 +383,11 @@ verify_patches() {
     v_present "PMStyler: mode-aware table borders"     "$styler" 'renderLightMode \? "D0D7DE" : "30363D"'
     v_absent  "PMStyler: washed-out table borders gone" "$styler" 'solid #444444'
     v_present "Previewer: literal page background"      "$PM_DIR/Markdown Previewer/PreviewViewController.swift" 'srgbRed: 13'
+    v_present "Previewer: 45em measure cap"             "$PM_DIR/Markdown Previewer/PreviewViewController.swift" 'vcMeasure: CGFloat = common\.settings\.fontSize \* 45\.0'
+    v_present "Previewer: measure cap centres column"   "$PM_DIR/Markdown Previewer/PreviewViewController.swift" 'max\(vcMargin, \(self\.preferredContentSize\.width - vcMeasure\) / 2\.0\)'
+    v_absent  "Previewer: square margin inset gone"     "$PM_DIR/Markdown Previewer/PreviewViewController.swift" 'NSSize\(width: common\.settings\.previewMarginWidth,'
+    v_present "PMLayouter: lozenge uses real inset"     "$PM_DIR/Common/PMLayouter.swift" 'lozengeRect\.origin\.x \+= lozengeInset\.width'
+    v_absent  "PMLayouter: square marginDelta gone"     "$PM_DIR/Common/PMLayouter.swift" 'origin\.y \+= self\.marginDelta'
     v_absent "PMStyler: old highlighter theme gone"     "$styler" 'atom-one'
     v_file "stub present: codes (root)"                 "$PM_DIR/REPLACE_WITH_YOUR_CODES.swift"
     v_file "stub present: codes (target dir)"           "$PM_DIR/PreviewMarkdown/REPLACE_WITH_YOUR_CODES.swift"
