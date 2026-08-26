@@ -160,11 +160,12 @@ sed -i '' \
     -e 's/(H2[[:space:]]+)=[[:space:]]*2\.2/\1= 1.4/' \
     -e 's/(H3[[:space:]]+)=[[:space:]]*1\.8/\1= 1.2/' \
     -e 's/(H4[[:space:]]+)=[[:space:]]*1\.4/\1= 1.0/' \
-    -e 's/(H5[[:space:]]+)=[[:space:]]*1\.2/\1= 1.0/' \
-    -e 's/(H6[[:space:]]+)=[[:space:]]*1\.2/\1= 1.0/' \
+    -e 's/(H5[[:space:]]+)=[[:space:]]*1\.2/\1= 0.9/' \
+    -e 's/(H6[[:space:]]+)=[[:space:]]*1\.2/\1= 0.85/' \
     -e 's/(FONT_SIZE[[:space:]]+)=[[:space:]]*16\.0/\1= 14.0/' \
     -e 's/(LINE_SPACING[[:space:]]+)=[[:space:]]*1\.0/\1= 1.1/' \
     -e 's/(PREVIEW_MARGIN_WIDTH[[:space:]]+)=[[:space:]]*16\.0/\1= 28.0/' \
+    -e 's/(BLOCK[[:space:]]+)=[[:space:]]*50\.0/\1= 16.0/' \
     "$PM_DIR/PreviewMarkdown/Constants.swift"
 
 # PMStyler.swift: vC dark-mode palette + tighter list indent + GitHub highlighter themes.
@@ -223,12 +224,73 @@ sed -i '' \
     "$PM_DIR/Common/PMStyler.swift"
 
 # Blockquotes: upstream renders bold at 1.6x body size, right-aligned, bare.
-# vC: body-size plain text, left-aligned, with a GitHub-blue left rule and a
-# subtle tinted panel (same NSTextTableBlock machinery as code blocks).
+# vC: body-size plain text, left-aligned, with GitHub's left rule.
+#
+# WHERE the rule has to go: styles["blockquote"][.paragraphStyle] is set from
+# paragraphs["quote"] at startup, but the renderer REPLACES it with
+# makeBlockParagraphStyle(inset) on every content flush inside a quote (see the
+# `if isBlockquote` branch), so paragraphs["quote"] never reaches the page.
+# Decorating it is dead code — the decoration belongs on the block style.
 sed -i '' \
     -e 's/makeFont("strong", self\.settings!\.fontSize \* BUFFOON_CONSTANTS\.MULTIPLIER\.BLOCK)/makeFont("plain", self.settings!.fontSize)/' \
     "$PM_DIR/Common/PMStyler.swift"
-perl -pi -e 's/^\s*self\.paragraphs\["quote"\]\s*=\s*quoteParaStyle$/        quoteParaStyle.alignment = .left\n        let quoteTable = NSTextTable(); quoteTable.numberOfColumns = 1; quoteTable.collapsesBorders = true\n        let quoteBlock = NSTextTableBlock(table: quoteTable, startingRow: 0, rowSpan: 1, startingColumn: 0, columnSpan: 1)\n        let quotePanel = self.renderLightMode ? NSColor(srgbRed: 246 \/ 255.0, green: 248 \/ 255.0, blue: 250 \/ 255.0, alpha: 1) : NSColor(srgbRed: 22 \/ 255.0, green: 27 \/ 255.0, blue: 34 \/ 255.0, alpha: 1)\n        quoteBlock.setWidth(10.0, type: .absoluteValueType, for: .padding)\n        quoteBlock.backgroundColor = quotePanel\n        quoteParaStyle.textBlocks.append(quoteBlock)\n        self.paragraphs["quote"] = quoteParaStyle/' \
+perl -pi -e 's/^\s*self\.paragraphs\["quote"\]\s*=\s*quoteParaStyle$/        quoteParaStyle.alignment = .left\n        self.paragraphs["quote"] = quoteParaStyle/' \
+    "$PM_DIR/Common/PMStyler.swift"
+# The rule itself: a 4pt .minX border on the block cell the renderer actually
+# uses, plus padding so the quote sits inside its own column. Per-edge border
+# colours DO render — the previewer draws through NSTextView/NSLayoutManager,
+# which honours them. (They are invisible under NSAttributedString.draw(in:),
+# a different engine that drops most NSTextBlock decoration; measuring there
+# is what previously "proved" borders impossible.)
+perl -pi -e 's/^(\s*)newParaStyle\.firstLineHeadIndent = newParaStyle\.headIndent$/$1newParaStyle.firstLineHeadIndent = newParaStyle.headIndent\n$1let quoteTable: NSTextTable = NSTextTable()\n$1quoteTable.numberOfColumns = 1\n$1quoteTable.collapsesBorders = true\n$1let quoteCell: NSTextTableBlock = NSTextTableBlock(table: quoteTable, startingRow: 0, rowSpan: 1, startingColumn: 0, columnSpan: 1)\n$1quoteCell.setWidth(4.0, type: .absoluteValueType, for: .border, edge: .minX)\n$1quoteCell.setBorderColor(self.renderLightMode ? NSColor(srgbRed: 208 \/ 255.0, green: 215 \/ 255.0, blue: 222 \/ 255.0, alpha: 1) : NSColor(srgbRed: 61 \/ 255.0, green: 68 \/ 255.0, blue: 77 \/ 255.0, alpha: 1), for: .minX)\n$1quoteCell.setWidth(24.0, type: .absoluteValueType, for: .padding, edge: .minX)\n$1quoteCell.setWidth(2.0, type: .absoluteValueType, for: .padding, edge: .minY)\n$1quoteCell.setWidth(2.0, type: .absoluteValueType, for: .padding, edge: .maxY)\n$1newParaStyle.textBlocks = [quoteCell]/' \
+    "$PM_DIR/Common/PMStyler.swift"
+
+# --- Typography: one readable ladder instead of many near-identical styles ---
+#
+# Upstream's ladder collapses at the bottom (H4/H5/H6 all body-size, and H6 not
+# even bold) so three heading levels render identically, while inline CODE and
+# CODE inside a blockquote render LARGER than the prose around them. The result
+# is a page full of apparent "styles" that carry no information. vC:
+#
+#   H1 1.75  H2 1.4  H3 1.2  H4 1.0  H5 0.9  H6 0.85 bold + muted grey
+#   inline code 0.9x — Menlo runs optically large, so 0.9 matches the body's
+#                      apparent size instead of shouting over it
+#   block code  1.0x — stands alone in its own panel, untouched (renderCode
+#                      never consults styles["code"], so this falls out free)
+#
+# H5/H6 sizes are floored so the 10pt font setting can't shrink them below
+# legibility, and H1/H2/H3 get extra space ABOVE them so hierarchy is carried
+# by air as much as by point size.
+sed -i '' -E \
+    -e 's/self\.colours\.body  = self\.renderLightMode \? \.black : \.white/self.colours.body  = self.renderLightMode ? NSColor.hexToColour("1F2328FF") : NSColor.hexToColour("E6EDF3FF")/' \
+    -e 's/makeFont\("strong", self\.settings!\.fontSize \* BUFFOON_CONSTANTS\.MULTIPLIER\.H5\)/makeFont("strong", max(self.settings!.fontSize * BUFFOON_CONSTANTS.MULTIPLIER.H5, 11.0))/' \
+    -e 's/makeFont\("code", setFontSize\(parentStyle\.name\)\)/makeFont("code", max(setFontSize(parentStyle.name) * 0.9, 11.0))/' \
+    -e 's/cellFont = self\.makeFont\("code", self\.settings!\.fontSize\)/cellFont = self.makeFont("code", max(self.settings!.fontSize * 0.9, 11.0))/' \
+    -e 's/border:0\.5px solid #444444;/border:0.5px solid #\\(self.renderLightMode ? "D0D7DE" : "30363D");/' \
+    "$PM_DIR/Common/PMStyler.swift"
+
+# H6: upstream is the ONLY heading rendered at "plain" weight, which — at
+# body size — makes it indistinguishable from a paragraph. Bold it, floor it,
+# and mute the colour so it reads as the quietest step, not a broken one.
+perl -0777 -pi -e 's/self\.styles\["h6"\](\s+)= \[\.foregroundColor: self\.colours\.head,\n(\s+)\.font: makeFont\("plain", self\.settings!\.fontSize \*\s+BUFFOON_CONSTANTS\.MULTIPLIER\.H6\),/self.styles["h6"]$1= [.foregroundColor: self.renderLightMode ? NSColor.hexToColour("6E7781FF") : NSColor.hexToColour("7D8590FF"),\n$2.font: makeFont("strong", max(self.settings!.fontSize * BUFFOON_CONSTANTS.MULTIPLIER.H6, 10.5)),/' \
+    "$PM_DIR/Common/PMStyler.swift"
+
+# Inline code: 0.9x body size on the same tint as the code-block panel.
+perl -0777 -pi -e 's/self\.styles\["code"\](\s+)= \[\.foregroundColor: self\.colours\.code,\n(\s+)\.font: makeFont\("code", self\.settings!\.fontSize\)\]/self.styles["code"]$1= [.foregroundColor: self.colours.code,\n$2.backgroundColor: self.renderLightMode ? NSColor(srgbRed: 246 \/ 255.0, green: 248 \/ 255.0, blue: 250 \/ 255.0, alpha: 1) : NSColor(srgbRed: 21 \/ 255.0, green: 27 \/ 255.0, blue: 35 \/ 255.0, alpha: 1),\n$2.font: makeFont("code", max(self.settings!.fontSize * 0.9, 11.0))]/' \
+    "$PM_DIR/Common/PMStyler.swift"
+
+# setFontSize BUG: "h4" falls through to "blockquote" and both return 1.6x, so
+# inline code inside an H4 or a blockquote renders at 22pt against 14pt prose.
+# H4 gets its own multiplier; a blockquote is body-size by definition.
+perl -0777 -pi -e 's/case "h4":\n(\s+)fallthrough\n(\s+)case "blockquote":\n(\s+)return self\.settings!\.fontSize \* BUFFOON_CONSTANTS\.MULTIPLIER\.BLOCK\n/case "h4":\n$3return self.settings!.fontSize * BUFFOON_CONSTANTS.MULTIPLIER.H4\n$2case "blockquote":\n$3return self.settings!.fontSize\n/' \
+    "$PM_DIR/Common/PMStyler.swift"
+
+# Space above headings: every block shares paragraphs["tabbed"], so a heading
+# gets exactly as much air as the paragraph before it. Give h1/h2/h3 their own
+# copies with paragraphSpacingBefore scaled to their weight in the outline.
+perl -0777 -pi -e 's/^(\s*)self\.paragraphs\["tabbed"\](\s+)= tabbedParaStyle$/$1self.paragraphs["tabbed"]$2= tabbedParaStyle\n\n$1for (headTag, headSpacing) in [("h1", 2.0), ("h2", 1.5), ("h3", 1.1)] as [(String, CGFloat)] {\n$1    let headParaStyle: NSMutableParagraphStyle = tabbedParaStyle.mutableCopy() as! NSMutableParagraphStyle\n$1    headParaStyle.paragraphSpacingBefore = self.paraSpacing * headSpacing\n$1    self.paragraphs[headTag] = headParaStyle\n$1}/m' \
+    "$PM_DIR/Common/PMStyler.swift"
+perl -0777 -pi -e 'for my $h (qw(h1 h2 h3)) { s/(self\.styles\["$h"\]\s+= \[.*?\.paragraphStyle: self\.paragraphs\[")tabbed("\]!\])/$1$h$2/s }' \
     "$PM_DIR/Common/PMStyler.swift"
 
 # Fix tintProminence (requires macOS 26 SDK, not available in Xcode 16)
@@ -269,11 +331,36 @@ verify_patches() {
     v_present "Constants: HelveticaNeue body font"     "$constants" 'HelveticaNeue'
     v_absent  "Constants: unresolvable SFPro-Regular"    "$constants" 'SFPro-Regular'
     v_absent  "Constants: non-enumerable system font"    "$constants" 'AppleSystemUIFont'
+    v_present "Constants: H1 ladder step 1.75"          "$constants" 'H1[[:space:]]+= 1\.75$'
+    v_present "Constants: H2 ladder step 1.4"           "$constants" 'H2[[:space:]]+= 1\.4$'
+    v_present "Constants: H3 ladder step 1.2"           "$constants" 'H3[[:space:]]+= 1\.2$'
+    v_present "Constants: H4 ladder step 1.0"           "$constants" 'H4[[:space:]]+= 1\.0$'
+    v_present "Constants: H5 ladder step 0.9"           "$constants" 'H5[[:space:]]+= 0\.9$'
+    v_present "Constants: H6 ladder step 0.85"          "$constants" 'H6[[:space:]]+= 0\.85$'
+    v_absent  "Constants: upstream 2.6x H1 gone"        "$constants" 'H1[[:space:]]+= 2\.6'
     v_min    "PMStyler: mode-aware colours (×4)"        "$styler" 'renderLightMode \? NSColor' 4
     v_present "PMStyler: literal code-block background" "$styler" 'srgbRed: 21'
     v_present "PMStyler: line-spacing floor"           "$styler" 'lineSpacing >= 1.0'
-    v_present "PMStyler: blockquote beautifier"        "$styler" 'quoteBlock.backgroundColor = quotePanel'
-    v_absent  "PMStyler: blockquote 1.6x bold gone"    "$styler" 'MULTIPLIER\.BLOCK\)'
+    v_present "Constants: blockquote inset 16"          "$constants" 'BLOCK[[:space:]]+= 16\.0'
+    v_present "PMStyler: blockquote left-aligned"      "$styler" 'quoteParaStyle\.alignment = \.left'
+    v_present "PMStyler: blockquote rule colour"       "$styler" 'quoteCell\.setBorderColor\('
+    v_present "PMStyler: rule on the style that ships" "$styler" 'newParaStyle\.textBlocks = \[quoteCell\]'
+    v_absent  "PMStyler: no 1.6x block multiplier left" "$styler" 'MULTIPLIER\.BLOCK'
+    v_present "PMStyler: h4 sized by its own step"     "$styler" 'return self\.settings!\.fontSize \* BUFFOON_CONSTANTS\.MULTIPLIER\.H4'
+    v_present "PMStyler: vC body ink, not pure b/w"    "$styler" 'colours\.body  = self\.renderLightMode \? NSColor\.hexToColour\("1F2328FF"\)'
+    v_absent  "PMStyler: .black/.white body gone"      "$styler" 'colours\.body  = self\.renderLightMode \? \.black'
+    v_present "PMStyler: H5 legibility floor"          "$styler" 'makeFont\("strong", max\(self\.settings!\.fontSize \* BUFFOON_CONSTANTS\.MULTIPLIER\.H5, 11\.0\)\)'
+    v_present "PMStyler: H6 bold + floor"              "$styler" 'makeFont\("strong", max\(self\.settings!\.fontSize \* BUFFOON_CONSTANTS\.MULTIPLIER\.H6, 10\.5\)\)'
+    v_present "PMStyler: H6 muted grey"                "$styler" 'NSColor\.hexToColour\("7D8590FF"\)'
+    v_absent  "PMStyler: plain-weight H6 gone"         "$styler" 'makeFont\("plain", self\.settings!\.fontSize \*[[:space:]]+BUFFOON_CONSTANTS\.MULTIPLIER\.H6'
+    v_present "PMStyler: inline code 0.9x"             "$styler" 'makeFont\("code", max\(self\.settings!\.fontSize \* 0\.9, 11\.0\)\)'
+    v_present "PMStyler: inline code tint"             "$styler" 'backgroundColor: self\.renderLightMode \? NSColor\(srgbRed: 246'
+    v_present "PMStyler: code-in-heading scaled too"   "$styler" 'makeFont\("code", max\(setFontSize\(parentStyle\.name\) \* 0\.9, 11\.0\)\)'
+    v_present "PMStyler: table inline code 0.9x"       "$styler" 'cellFont = self\.makeFont\("code", max\('
+    v_present "PMStyler: heading spacing styles built" "$styler" 'self\.paragraphs\[headTag\] = headParaStyle'
+    v_min    "PMStyler: h1/h2/h3 own para styles (×3)" "$styler" 'paragraphStyle: self\.paragraphs\["h[123]"\]!\]' 3
+    v_present "PMStyler: mode-aware table borders"     "$styler" 'renderLightMode \? "D0D7DE" : "30363D"'
+    v_absent  "PMStyler: washed-out table borders gone" "$styler" 'solid #444444'
     v_present "Previewer: literal page background"      "$PM_DIR/Markdown Previewer/PreviewViewController.swift" 'srgbRed: 13'
     v_absent "PMStyler: old highlighter theme gone"     "$styler" 'atom-one'
     v_file "stub present: codes (root)"                 "$PM_DIR/REPLACE_WITH_YOUR_CODES.swift"
