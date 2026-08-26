@@ -57,10 +57,16 @@ fi
 SUITE_PLIST="$HOME/Library/Group Containers/com.local.suite.previewmarkdown/Library/Preferences/com.local.suite.previewmarkdown.plist"
 if [ -f "$SUITE_PLIST" ]; then
     ls_seed="$(/usr/libexec/PlistBuddy -c 'Print :com-bps-previewmarkdown-line-spacing' "$SUITE_PLIST" 2>/dev/null || true)"
+    # Compare against the value build.sh actually ships rather than a hardcoded
+    # one, and against the popup's list: a stored value the popup can't select
+    # falls back to its first entry, so opening Settings silently resets it.
+    ls_want="$(sed -n 's/.*(LINE_SPACING\[\[:space:\]\]+)=\[\[:space:\]\]\*1\\\.0\/\\1= \([0-9.]*\)\/.*/\1/p' "$SCRIPT_DIR/build.sh" | head -1)"
+    ls_want="${ls_want:-1.35}"
     case "$ls_seed" in
-        1.1*) ok "suite line-spacing seeded sane ($ls_seed)" ;;
-        "")   warn "suite exists but line-spacing unseeded (floor guard now covers this)" ;;
-        *)    warn "suite line-spacing is '$ls_seed' (expected 1.1) — check re-seeding" ;;
+        "")            warn "suite exists but line-spacing unseeded (floor guard now covers this)" ;;
+        "$ls_want"*)   ok "suite line-spacing seeded sane ($ls_seed)" ;;
+        1.0*|1.5*|2.0*) ok "suite line-spacing is '$ls_seed' — not the shipped default but selectable in Settings" ;;
+        *)             warn "suite line-spacing '$ls_seed' is not offered by the Settings popup — opening Settings would reset it" ;;
     esac
 else
     warn "suite plist absent — defaults re-seed on next preview; line-spacing floor now protects fresh states"

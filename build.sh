@@ -163,7 +163,7 @@ sed -i '' \
     -e 's/(H5[[:space:]]+)=[[:space:]]*1\.2/\1= 0.9/' \
     -e 's/(H6[[:space:]]+)=[[:space:]]*1\.2/\1= 0.85/' \
     -e 's/(FONT_SIZE[[:space:]]+)=[[:space:]]*16\.0/\1= 14.0/' \
-    -e 's/(LINE_SPACING[[:space:]]+)=[[:space:]]*1\.0/\1= 1.1/' \
+    -e 's/(LINE_SPACING[[:space:]]+)=[[:space:]]*1\.0/\1= 1.35/' \
     -e 's/(PREVIEW_MARGIN_WIDTH[[:space:]]+)=[[:space:]]*16\.0/\1= 28.0/' \
     -e 's/(BLOCK[[:space:]]+)=[[:space:]]*50\.0/\1= 16.0/' \
     "$PM_DIR/PreviewMarkdown/Constants.swift"
@@ -228,9 +228,21 @@ perl -0777 -pi -e 's/        lozengeRect\.origin\.x \+= self\.marginDelta\n     
 sed -i '' \
     -e 's/NSColor\.textBackgroundColor$/NSColor(srgbRed: 13 \/ 255.0, green: 17 \/ 255.0, blue: 23 \/ 255.0, alpha: 1)/' \
     "$PM_DIR/Markdown Previewer/PreviewViewController.swift"
-# Paragraph gap: upstream hardcodes fontSize * 1.4 (~20pt at 14pt base);
-# vC wants ~0.6em (~8.4pt)
-sed -i '' 's/self\.settings\.fontSize \* 1\.4/self.settings.fontSize * 0.6/' "$PM_DIR/Common/Common.swift"
+# Paragraph gap: upstream hardcodes fontSize * 1.4 (~20pt at 14pt base).
+# vC wants 0.75em (10.5pt), which is half a line pitch at the 1.35 leading —
+# the point where a paragraph break still reads as a break. Raising the leading
+# without raising this makes paragraphs run together.
+sed -i '' 's/self\.settings\.fontSize \* 1\.4/self.settings.fontSize * 0.75/' "$PM_DIR/Common/Common.swift"
+
+# The line-spacing popup offers a fixed list of values, and the shipped default
+# has to BE one of them: selectItem(at: firstIndex(of: setting) ?? 0) silently
+# falls back to the first entry otherwise, so opening Settings and pressing
+# Apply would quietly reset the leading to Single. Retitle the 1.15 slot (which
+# renders as line-height 1.29 — between the too-tight and the too-airy options,
+# and no use to anyone) to the 1.35 the theme now ships.
+sed -i '' 's/linespacingValues: \[CGFloat\] = \[1\.0, 1\.15, 1\.5, 2\.0\]/linespacingValues: [CGFloat] = [1.0, 1.35, 1.5, 2.0]/g' \
+    "$PM_DIR/PreviewMarkdown/AppDelegateSettings.swift"
+sed -i '' 's/title="1\.15"/title="1.35"/g' "$PM_DIR/PreviewMarkdown/Base.lproj/MainMenu.xib"
 
 sed -i '' \
     -e 's/paragraphBlock\.backgroundColor = \.previewCode/paragraphBlock.backgroundColor = self.renderLightMode ? NSColor(srgbRed: 246 \/ 255.0, green: 248 \/ 255.0, blue: 250 \/ 255.0, alpha: 1) : NSColor(srgbRed: 21 \/ 255.0, green: 27 \/ 255.0, blue: 35 \/ 255.0, alpha: 1)/' \
@@ -362,6 +374,12 @@ verify_patches() {
     v_min    "PMStyler: mode-aware colours (×4)"        "$styler" 'renderLightMode \? NSColor' 4
     v_present "PMStyler: literal code-block background" "$styler" 'srgbRed: 21'
     v_present "PMStyler: line-spacing floor"           "$styler" 'lineSpacing >= 1.0'
+    v_present "Constants: 1.35 leading (line-height 1.49)" "$constants" 'LINE_SPACING[[:space:]]+= 1\.35'
+    v_present "Common: paragraph gap 0.75em"           "$PM_DIR/Common/Common.swift" 'fontSize \* 0\.75'
+    v_present "Settings: popup offers the shipped 1.35" "$PM_DIR/PreviewMarkdown/AppDelegateSettings.swift" 'linespacingValues: \[CGFloat\] = \[1\.0, 1\.35, 1\.5, 2\.0\]'
+    v_absent  "Settings: unreachable 1.15 slot gone"   "$PM_DIR/PreviewMarkdown/AppDelegateSettings.swift" '1\.0, 1\.15,'
+    v_present "XIB: popup item matches the default"    "$PM_DIR/PreviewMarkdown/Base.lproj/MainMenu.xib" 'title="1\.35"'
+    v_absent  "XIB: stale 1.15 item gone"              "$PM_DIR/PreviewMarkdown/Base.lproj/MainMenu.xib" 'title="1\.15"'
     v_present "Constants: blockquote inset 16"          "$constants" 'BLOCK[[:space:]]+= 16\.0'
     v_present "PMStyler: blockquote left-aligned"      "$styler" 'quoteParaStyle\.alignment = \.left'
     v_present "PMStyler: blockquote rule colour"       "$styler" 'quoteCell\.setBorderColor\('
