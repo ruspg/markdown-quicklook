@@ -326,6 +326,108 @@ perl -0777 -pi -e 's/^(\s*)self\.paragraphs\["tabbed"\](\s+)= tabbedParaStyle$/$
 perl -0777 -pi -e 'for my $h (qw(h1 h2 h3)) { s/(self\.styles\["$h"\]\s+= \[.*?\.paragraphStyle: self\.paragraphs\[")tabbed("\]!\])/$1$h$2/s }' \
     "$PM_DIR/Common/PMStyler.swift"
 
+# Table width: upstream's 200% is from commit 5c64a2e, titled "Experimentation".
+# It cannot make the table wider — the text container is capped at 45em — it only
+# lets the importer hand the long column a bigger share, so everything else is
+# squeezed harder. Over the corpus below it costs 2.3pp of broken cells and 46pt
+# of height for nothing.
+sed -i '' 's/<table width=\\"200%\\"/<table width=\\"100%\\"/' \
+    "$PM_DIR/Common/PMStyler.swift"
+
+# Table column widths: upstream sets none at all, so NSAttributedString's HTML
+# importer applies its automatic algorithm — shares proportional to max-content.
+# A column of one-word verdicts beside a column of sentences is then squeezed
+# below its own longest word and wraps mid-word, one letter per line. Re-derive
+# the shares from cell content compressed by a quarter power, post-parse, where
+# the user's real font is known (the importer measures with its own default).
+#
+# p=0.25 was picked by measurement over 600 tables from real .md files, not by
+# taste. Mid-word breakage 27.2% -> 10.6%; tables with any broken cell 63.3% ->
+# 22.3%; and the average table gets SHORTER, 543pt -> 510pt, so it is not a
+# height-for-legibility trade. Neighbours on the curve: p=0.50 (sqrt) leaves
+# 13.1%, p=0.00 (equal shares) reaches 10.0% but costs 89pt of height. A floor
+# under each column was tried and dropped — it moved breakage by 0.02pp.
+# Improvement holds at every column count (2 cols 13.2->1.1%, 7 cols 69.9->54.0%),
+# though >=6-column tables stay bad under every strategy: at 630pt they get
+# ~70pt per column, which is a measure-cap problem, not an allocation one.
+export PM_TABLE_WIDTHS
+PM_TABLE_WIDTHS=$(cat <<'SWIFT'
+                // Column shares from content, quarter-power compressed. See build.sh
+                // for the corpus measurement behind the exponent.
+                var pmCellRanges: [String: NSRange] = [:]
+                var pmCellColumn: [String: Int] = [:]
+                tableString.enumerateAttribute(.paragraphStyle, in: NSMakeRange(0, tableString.length)) { (value: Any?, range: NSRange, _: UnsafeMutablePointer<ObjCBool>) in
+                    guard let style = value as? NSParagraphStyle else { return }
+                    for block in style.textBlocks {
+                        guard let cell = block as? NSTextTableBlock else { continue }
+                        let key: String = "\(cell.startingRow).\(cell.startingColumn)"
+                        pmCellColumn[key] = cell.startingColumn
+                        if let known = pmCellRanges[key] {
+                            pmCellRanges[key] = NSUnionRange(known, range)
+                        } else {
+                            pmCellRanges[key] = range
+                        }
+                    }
+                }
+
+                let pmMeasureFont: NSFont = self.makeFont("plain", self.settings!.fontSize)
+                let pmRaw: NSString = tableString.string as NSString
+                var pmNatural: [Int: CGFloat] = [:]
+                for (key, range) in pmCellRanges {
+                    guard let column = pmCellColumn[key], NSMaxRange(range) <= pmRaw.length else { continue }
+                    let cellText: String = pmRaw.substring(with: range).trimmingCharacters(in: .whitespacesAndNewlines)
+                    let cellWidth: CGFloat = (cellText as NSString).size(withAttributes: [.font: pmMeasureFont]).width
+                    pmNatural[column] = max(pmNatural[column] ?? 0.0, cellWidth)
+                }
+
+                if pmNatural.count > 1 {
+                    var pmWeights: [Int: CGFloat] = [:]
+                    for (column, naturalWidth) in pmNatural {
+                        pmWeights[column] = pow(max(naturalWidth, 1.0), 0.25)
+                    }
+
+                    let pmTotal: CGFloat = pmWeights.values.reduce(0.0, +)
+                    if pmTotal > 0.0 {
+                        tableString.enumerateAttribute(.paragraphStyle, in: NSMakeRange(0, tableString.length)) { (value: Any?, range: NSRange, _: UnsafeMutablePointer<ObjCBool>) in
+                            guard let style = value as? NSParagraphStyle,
+                                  let mutableStyle = style.mutableCopy() as? NSMutableParagraphStyle else { return }
+
+                            var changed: Bool = false
+                            for block in mutableStyle.textBlocks {
+                                guard let cell = block as? NSTextTableBlock,
+                                      let weight = pmWeights[cell.startingColumn] else { continue }
+                                cell.setContentWidth(weight / pmTotal * 100.0, type: .percentageValueType)
+                                changed = true
+                            }
+
+                            if changed {
+                                tableString.addAttribute(.paragraphStyle, value: mutableStyle, range: range)
+                            }
+                        }
+                    }
+                }
+
+                // Air under a table. Upstream ends the HTML with a blank line, which
+                // the importer collapses, leaving 13pt — the hard border of a table
+                // needs more optical separation than the last baseline of a paragraph.
+                // Every knob on the table block itself is ignored here: margin .maxY,
+                // padding .maxY, and paragraphSpacing on the last row are all measured
+                // no-ops against the frozen table layout of the importer. So the gap
+                // has to ride on a paragraph appended after the table. 0.75 lands it
+                // at 21.9pt, level with blockquote paraSpacing * 2.0 — the other
+                // heavy block. NB: no apostrophes in this heredoc; bash 3.2 reads them
+                // as quotes and loses the closing paren of the command substitution.
+                let pmGapStyle: NSMutableParagraphStyle = NSMutableParagraphStyle()
+                pmGapStyle.paragraphSpacing = self.paraSpacing * 0.75
+                pmGapStyle.lineSpacing = 0.0
+                tableString.append(NSAttributedString(string: "\n",
+                                                      attributes: [.font: self.makeFont("plain", 1.0),
+                                                                   .paragraphStyle: pmGapStyle]))
+SWIFT
+)
+perl -0777 -pi -e 'BEGIN { $ins = $ENV{PM_TABLE_WIDTHS} } s/\n\n([ ]+return tableString\n)/\n\n$ins\n$1/' \
+    "$PM_DIR/Common/PMStyler.swift"
+
 # Fix tintProminence (requires macOS 26 SDK, not available in Xcode 16)
 SETTINGS_FILE="$PM_DIR/PreviewMarkdown/AppDelegateSettings.swift"
 if grep -q "self.fontSizeSlider.tintProminence" "$SETTINGS_FILE" 2>/dev/null; then
@@ -400,6 +502,12 @@ verify_patches() {
     v_min    "PMStyler: h1/h2/h3 own para styles (×3)" "$styler" 'paragraphStyle: self\.paragraphs\["h[123]"\]!\]' 3
     v_present "PMStyler: mode-aware table borders"     "$styler" 'renderLightMode \? "D0D7DE" : "30363D"'
     v_absent  "PMStyler: washed-out table borders gone" "$styler" 'solid #444444'
+    v_present "PMStyler: table at 100% width"          "$styler" '<table width=\\"100%\\"'
+    v_absent  "PMStyler: upstream 200% table gone"     "$styler" '<table width=\\"200%\\"'
+    v_present "PMStyler: quarter-power column shares"  "$styler" 'pow\(max\(naturalWidth, 1\.0\), 0\.25\)'
+    v_present "PMStyler: column shares measured"       "$styler" 'pmNatural\[column\] = max\(pmNatural\[column\] \?\? 0\.0, cellWidth\)'
+    v_present "PMStyler: shares applied as percent"    "$styler" 'setContentWidth\(weight / pmTotal \* 100\.0, type: \.percentageValueType\)'
+    v_present "PMStyler: air under a table"            "$styler" 'pmGapStyle\.paragraphSpacing = self\.paraSpacing \* 0\.75'
     v_present "Previewer: literal page background"      "$PM_DIR/Markdown Previewer/PreviewViewController.swift" 'srgbRed: 13'
     v_present "Previewer: 45em measure cap"             "$PM_DIR/Markdown Previewer/PreviewViewController.swift" 'vcMeasure: CGFloat = common\.settings\.fontSize \* 45\.0'
     v_present "Previewer: measure cap centres column"   "$PM_DIR/Markdown Previewer/PreviewViewController.swift" 'max\(vcMargin, \(self\.preferredContentSize\.width - vcMeasure\) / 2\.0\)'
