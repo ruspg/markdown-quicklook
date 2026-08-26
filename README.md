@@ -32,14 +32,14 @@ If upstream has drifted so a patch no longer lands, the build stops and tells yo
 
 Quick Look is a *reading* surface, so the theme is built like one. Every number below is measured off the real renderer, not estimated.
 
-| | |
-|---|---|
-| **Body** | Helvetica Neue 14pt with true bold — no faux-bold blocks |
-| **Code** | Menlo, inline at 0.9× so it matches the optical size of the prose it sits in |
-| **Measure** | capped at 45em ≈ 95 characters, centred — the panel stays wide, the column doesn't |
-| **Leading** | 20.90pt line pitch, line-height 1.49 — GitHub markdown parity |
-| **Paragraphs** | 0.75em apart, half a line pitch, so a break reads as a break |
-| **Pages** | `#FFFFFF` / `#0D1117`, ink `#1F2328` / `#E6EDF3` |
+| Element | Setting | Why |
+|---|---|---|
+| Body | Helvetica Neue 14pt | true bold, not faux-bold blocks |
+| Code | Menlo, inline at 0.9× | Menlo runs optically large; 0.9 matches the prose it sits in |
+| Measure | 45em ≈ 95 characters, centred | the panel stays wide, the column doesn't |
+| Leading | 20.90pt pitch, line-height 1.49 | GitHub markdown parity; long lines need more, not less |
+| Paragraphs | 0.75em apart | half a line pitch, so a break reads as a break |
+| Pages | `#FFFFFF` / `#0D1117` | ink `#1F2328` / `#E6EDF3` |
 
 The heading ladder is six steps that are actually six steps:
 
