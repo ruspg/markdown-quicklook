@@ -50,7 +50,18 @@ tmp=$(mktemp -d "${TMPDIR:-/tmp}/markdown-quicklook.XXXXXX")
 trap 'rm -rf "$tmp"' EXIT INT TERM
 curl -fsSL --retry 3 --connect-timeout 10 --max-time 300 -o "$tmp/release.zip" "$asset_url" \
     || fail "download failed"
-say "sha256: $(shasum -a 256 "$tmp/release.zip" | awk '{print $1}')"
+
+zip_name="markdown-quicklook-$VERSION-macos-universal.zip"
+expected=$(curl -fsSL --max-time 30 "https://github.com/$REPO/releases/download/$VERSION/SHA256SUMS" 2>/dev/null \
+    | awk -v n="$zip_name" '$2 == n { print $1 }') || true
+if [ -n "$expected" ]; then
+    actual=$(shasum -a 256 "$tmp/release.zip" | awk '{print $1}')
+    [ "$actual" = "$expected" ] \
+        || fail "sha256 mismatch for $zip_name — the download is corrupt or was tampered with (expected $expected, got $actual)"
+    say "sha256 verified against SHA256SUMS: $actual"
+else
+    say "sha256: $(shasum -a 256 "$tmp/release.zip" | awk '{print $1}') (no SHA256SUMS asset for $VERSION — not verified)"
+fi
 
 ditto -x -k "$tmp/release.zip" "$tmp" || fail "archive could not be extracted"
 
