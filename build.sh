@@ -3,9 +3,11 @@ set -euo pipefail
 
 # markdown-quicklook build script (hardened).
 #
-#   ./build.sh          patch, verify, build, install, register, launch
-#   ./build.sh --check  patch + verify only — no build, no install, no launch;
-#                       the submodule is restored to pristine afterwards.
+#   ./build.sh                patch, verify, build, install, register, launch
+#   ./build.sh --check        patch + verify only — no build, no install, no launch;
+#                             the submodule is restored to pristine afterwards.
+#   ./build.sh --release-zip  build, package release/ artifacts for a GitHub
+#                             release, and exit — no install, no launch.
 #
 # The patch layer is semantic (seds + regenerated stubs) applied to a CLEAN
 # submodule, then verified by OUTCOME assertions. If upstream drifts so a sed
@@ -29,11 +31,22 @@ warn()  { echo -e "${YELLOW}[!]${NC} $1"; }
 fail()  { echo -e "${RED}[✗]${NC} $1"; exit 1; }
 
 CHECK_ONLY=0
-[ "${1:-}" = "--check" ] && CHECK_ONLY=1
+RELEASE_ZIP=0
+case "${1:-}" in
+    "") ;;
+    --check) CHECK_ONLY=1 ;;
+    --release-zip) RELEASE_ZIP=1 ;;
+    *) fail "usage: build.sh [--check | --release-zip]" ;;
+esac
+if [ "$CHECK_ONLY" -eq 1 ] && [ "$RELEASE_ZIP" -eq 1 ]; then
+    fail "--check and --release-zip are mutually exclusive"
+fi
 
 echo ""
 if [ "$CHECK_ONLY" -eq 1 ]; then
     echo "=== markdown-quicklook build (--check: patch + verify only) ==="
+elif [ "$RELEASE_ZIP" -eq 1 ]; then
+    echo "=== markdown-quicklook build (--release-zip: build + package, no install) ==="
 else
     echo "=== markdown-quicklook build ==="
 fi
@@ -623,6 +636,34 @@ cp "$QLTOGGLE_DIR/Info.plist" "$QLTOGGLE_APP/Contents/"
 codesign --force --sign - "$QLTOGGLE_APP" || fail "codesign failed: QLToggle.app"
 rm -f "$QLTOGGLE_BIN"
 info "QLToggle built"
+
+# --- Release zip ---
+
+if [ "$RELEASE_ZIP" -eq 1 ]; then
+    echo ""
+    if git -C "$SCRIPT_DIR" describe --tags --exact-match >/dev/null 2>&1; then
+        REL_VERSION="$(git -C "$SCRIPT_DIR" describe --tags --exact-match)"
+    else
+        REL_VERSION="$(git -C "$SCRIPT_DIR" describe --tags --abbrev=0 2>/dev/null || echo unreleased)"
+        warn "HEAD is not on a tag — naming the zip after nearest tag '$REL_VERSION'."
+    fi
+    REL_DIR="$SCRIPT_DIR/release"
+    STAGE="$REL_DIR/markdown-quicklook"
+    rm -rf "$REL_DIR"
+    mkdir -p "$STAGE"
+    cp -R "$PM_APP" "$STAGE/PreviewMarkdown.app"
+    cp -R "$QLTOGGLE_APP" "$STAGE/QLToggle.app"
+    xattr -dr com.apple.quarantine "$STAGE/PreviewMarkdown.app" 2>/dev/null || true
+    xattr -dr com.apple.quarantine "$STAGE/QLToggle.app" 2>/dev/null || true
+    ditto -c -k --sequesterRsrc --keepParent "$STAGE" "$REL_DIR/markdown-quicklook-$REL_VERSION-macos-universal.zip"
+    ( cd "$REL_DIR" && shasum -a 256 "markdown-quicklook-$REL_VERSION-macos-universal.zip" > SHA256SUMS )
+    info "Release artifacts in $REL_DIR:"
+    cat "$REL_DIR/SHA256SUMS"
+    echo ""
+    echo "Upload both files as release assets for $REL_VERSION."
+    echo "install.sh verifies the zip against SHA256SUMS and expects the folder layout above."
+    exit 0
+fi
 
 # --- Install ---
 
