@@ -14,17 +14,31 @@ macOS has shipped Quick Look for fifteen years and still previews Markdown as pl
 
 ## Install
 
+No Xcode, no developer account, no clone:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/ruspg/markdown-quicklook/main/install.sh | bash
+```
+
+The script downloads the latest release (prebuilt, universal), installs both apps to `~/Applications/`, clears the download quarantine, registers the extensions and restarts Quick Look. Re-run it any time to upgrade. To pin a version: `... | bash -s -- v2.1.0`.
+
+Piping a URL to `bash` runs someone else's code — the script is short; [read it first](install.sh) if that's your habit.
+
+**Requirements** — macOS 13 or later, Apple Silicon or Intel.
+
+### Build from source
+
 ```bash
 git clone --recursive https://github.com/ruspg/markdown-quicklook.git
 cd markdown-quicklook
 ./build.sh
 ```
 
-That's it. No sudo, no developer account. The script resets the submodule to pristine, applies the patch layer, **verifies all 68 patches by outcome**, builds and ad-hoc signs both apps, installs them to `~/Applications/`, registers the extensions and restarts Quick Look.
+That's it. No sudo, no developer account. The script resets the submodule to pristine, applies the patch layer, **verifies all 74 patches by outcome**, builds and ad-hoc signs both apps, installs them to `~/Applications/`, registers the extensions and restarts Quick Look.
 
 If upstream has drifted so a patch no longer lands, the build stops and tells you which assertion failed — it will not ship a silently wrong binary.
 
-**Requirements** — macOS 13 or later, Apple Silicon or Intel; Xcode command line tools (developed on Xcode 26); network access on the first build, for Swift package resolution.
+**Requirements** — macOS 13 or later, Apple Silicon or Intel; a full Xcode install (`xcodebuild` refuses to run against command line tools alone); network access on the first build, for Swift package resolution.
 
 ---
 
