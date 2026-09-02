@@ -1,1 +1,3 @@
 .last-build.log
+release/
+.DS_Store
